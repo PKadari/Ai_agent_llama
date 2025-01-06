@@ -1,92 +1,74 @@
 from phi.agent import Agent
 from phi.model.groq import Groq
-from phi.tools.yfinance import YFinanceTools
 from dotenv import load_dotenv
-import logging
 import pyttsx3  # Import the text-to-speech library
+import re  # Import regex for removing special characters
+import logging
 
 load_dotenv()
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
-
 # Initialize the text-to-speech engine
-try:
-    tts_engine = pyttsx3.init()
-    logger.info("Text-to-speech engine initialized successfully.")
-except Exception as e:
-    logger.exception("Failed to initialize text-to-speech engine: %s", e)
-    print("Failed to initialize text-to-speech engine. Please check the logs for more details.")
-    tts_engine = None
+tts_engine = pyttsx3.init()
 
-# Check and set the voice
-if tts_engine:
+def initialize_tts_engine(voice_index=0, rate=150):
     voices = tts_engine.getProperty('voices')
-    if voices:
-        tts_engine.setProperty('voice', voices[0].id)  # Set to the first available voice
-        logger.info("Voice set to: %s", voices[0].id)
+    if voices and 0 <= voice_index < len(voices):
+        tts_engine.setProperty('voice', voices[voice_index].id)  # Set to the specified voice
     else:
-        logger.warning("No voices found for text-to-speech engine.")
+        logger.warning("Invalid voice index, using default voice")
+    tts_engine.setProperty('rate', rate)  # Adjust the rate as needed
 
-    # Set speech rate (optional)
-    tts_engine.setProperty('rate', 150)  # Adjust the rate as needed
-    logger.info("Speech rate set to: %d", 150)
-else:
-    logger.error("Text-to-speech engine is not available.")
+# Initialize with default settings
+initialize_tts_engine()
 
-# Test the text-to-speech engine with a simple phrase
-if tts_engine:
+# Initialize the agent
+agent = Agent(
+    model = Groq(id="llama-3.3-70b-versatile"),
+    version = "latest",
+    tools = [],
+    markdown=True,
+    show_tool_calls=True,
+    instructions=[
+        "Generate a simple short story",
+        "Keep the story engaging and concise"
+    ],
+    debug_mode=False
+)
+
+def generate_story(user_input):
+    logger.info("Generating story using the agent")
+    response = agent.run(user_input).content
+    if response:
+        clean_response = re.sub(r'[^\w\s]', '', response)
+        logger.info("Generated story: %s", clean_response)
+        return clean_response
+    else:
+        logger.error("The agent did not provide a response")
+        return None
+
+def speak_text(text):
+    logger.info("Converting text to speech: %s", text)
     try:
-        test_phrase = "This is a test of the text-to-speech engine."
-        logger.info("Testing text-to-speech engine with phrase: %s", test_phrase)
-        tts_engine.say(test_phrase)
+        tts_engine.say(text)
         tts_engine.runAndWait()
-        logger.info("Text-to-speech test completed.")
+    except RuntimeError as e:
+        logger.error("Error in speak_text: %s", e)
+        # If the loop is already running, stop it and try again
+        tts_engine.stop()
+        tts_engine.say(text)
+        tts_engine.runAndWait()
     except Exception as e:
-        logger.exception("An error occurred during the text-to-speech test: %s", e)
-else:
-    logger.error("Text-to-speech engine is not available for testing.")
+        logger.error("Unexpected error in speak_text: %s", e)
+    finally:
+        tts_engine.stop()
 
-try:
-    agent = Agent(
-        model = Groq(id="llama-3.3-70b-versatile"),
-        # use latest data to get the best results
-        version = "latest",
-        tools = [YFinanceTools(stock_price=True, stock_fundamentals=True, analyst_recommendations=True)],
-        markdown=True,
-        show_tool_calls=True,
-        instructions=[
-            "Use table to display the data",
-            "Provide a summary of the stock performance",
-            "Highlight key financial metrics",
-            "Include analyst recommendations"
-        ],
-        debug_mode=False
-    )
-
-    # Ensure the agent is properly initialized before calling print_response
-    if agent:
-        response = agent.print_response("analyze NVDA")
-        logger.info("Agent response: %s", response)
-        print(response)
-        
-        # Convert the response text to speech
-        if tts_engine:
-            logger.info("Starting text-to-speech conversion.")
-            tts_engine.say(response)
-            tts_engine.runAndWait()
-            logger.info("Text-to-speech conversion completed.")
-            
-            # Additional debugging: Save the speech to a file
-            tts_engine.save_to_file(response, 'output.mp3')
-            tts_engine.runAndWait()
-            logger.info("Text-to-speech saved to output.mp3.")
-        else:
-            logger.error("Text-to-speech engine is not available for conversion.")
-    else:
-        logger.error("Failed to initialize the agent.")
-        print("Failed to initialize the agent.")
-except Exception as e:
-    logger.exception("An error occurred while initializing the agent or processing the request: %s", e)
-    print("An error occurred. Please check the logs for more details.")
+if __name__ == '__main__':
+    try:
+        logger.info("Starting the text-to-speech server")
+        response = generate_story("Write a short story about a magical adventure")
+        speak_text(response)
+    except Exception as e:
+        logger.error("Error in main: %s", e)
